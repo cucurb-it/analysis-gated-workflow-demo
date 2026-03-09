@@ -11,9 +11,9 @@
 | Field | Value |
 |---|---|
 | Current Phase | IMPLEMENTATION PLANNING PHASE |
-| Phase Status | IN PROGRESS |
+| Phase Status | AWAITING ARCHITECT REVIEW |
 | Last Updated | 2026-03-09 |
-| Pending Architect Action | none |
+| Pending Architect Action | Review Implementation Plan. Add ADR annotations if corrections needed. Signal go for Phase 05 to begin implementation. |
 
 ---
 
@@ -512,7 +512,184 @@ Ollama is used, thinking is typically completed before the response begins.
 ---
 
 ## Implementation Plan
-*(populated in Phase 04)*
+
+### 4.1 — Proposed Changes Summary
+
+| File | Change Type | Description |
+|---|---|---|
+| `src/LLMAgentTUI./Services/IChatService.cs` | Modified | Replace `Task<string> SendMessageAsync` with `IAsyncEnumerable<StreamingChatUpdate> SendMessageStreamingAsync` |
+| `src/LLMAgentTUI./Services/ChatService.cs` | Modified | Replace `CompleteAsync` with `CompleteStreamingAsync`; implement `<think>` tag state machine; update history recording |
+| `src/LLMAgentTUI./Components/App.razor` | Modified | Add `ThinkingContent` to `ChatMessage`; update `SendMessage()` to consume streaming; update rendering loop |
+| `src/LLMAgentTUI./Services/StreamingChatUpdate.cs` | Created | New record type discriminating thinking vs. response token fragments |
+
+No files are deleted.
+
+**New constructs introduced:**
+- `StreamingChatUpdate` record with `string Text` and `bool IsThinking`
+- `<think>` tag streaming state machine in `ChatService`
+- Incremental UI rendering via `await foreach` + `StateHasChanged()` in `App.razor`
+
+**Existing constructs eliminated:**
+- `IChatService.SendMessageAsync(string) : Task<string>` — replaced by streaming equivalent
+- `_chatClient.CompleteAsync()` call in `ChatService` — replaced by `CompleteStreamingAsync()`
+
+---
+
+### 4.2 — Strategy Evaluation
+
+The primary design decision is the `IChatService` contract shape for surfacing both thinking and response content to the UI in real time.
+
+| Strategy | Description | Impact | Risk | Complexity | Verdict |
+|---|---|---|---|---|---|
+| A: `IAsyncEnumerable<StreamingChatUpdate>` | Stream discriminated update records (text + isThinking flag) | Full real-time streaming, clean consumer API, idiomatic .NET async | Low | Medium | ✅ Selected |
+| B: Callback delegates | `SendMessageStreamingAsync(string, Action<string> onThinking, Action<string> onResponse)` | Works but bleeds UI concerns into service contract; harder to cancel | Medium | Low | ❌ Not selected |
+| C: `Task<(string Thinking, string Response)>` | Batch result — both streams fully accumulated before return | No real-time thinking progress; violates feature requirement | — | Low | ❌ Violates requirements |
+| D: Wrapper with two separate IAsyncEnumerables | Return struct containing two streams | Complex coordination; no framework support for dual enumeration | High | High | ❌ Overengineered |
+
+**Selected: Strategy A.** `IAsyncEnumerable<StreamingChatUpdate>` is the idiomatic .NET pattern for streaming async sequences. It supports `await foreach` in the consumer, is cancellable via `CancellationToken`, and keeps the service contract clean. The `IsThinking` discriminator on each update gives the UI all it needs to route tokens to the correct buffer.
+
+---
+
+### 4.3 — Implementation Phases
+
+---
+
+#### Phase 1: Data Infrastructure 🔲
+
+##### 1.1 Create `StreamingChatUpdate` record
+
+- [ ] Create `src/LLMAgentTUI./Services/StreamingChatUpdate.cs`
+- [ ] Define `public record StreamingChatUpdate(string Text, bool IsThinking);`
+- [ ] Namespace: `LLMAgentTUI.Services`
+- [ ] No additional members needed — keep it minimal
+
+##### 1.2 Extend `ChatMessage` UI model in `App.razor`
+
+- [ ] In the `@code` block of `App.razor`, locate the inner `ChatMessage` class
+- [ ] Add property: `public string? ThinkingContent { get; set; }`
+- [ ] Property is nullable — `null` for user messages and non-thinking AI responses; non-null for AI responses from thinking models
+- [ ] Do not change `Content` or `IsUser` — existing properties are preserved
+
+##### 1.3 Build and Validate
+
+- [ ] Build `LLMAgentTUI` (dotnet build)
+- [ ] Verify no compilation errors
+- [ ] Verify no new warnings
+
+---
+
+#### Phase 2: Service Layer — Streaming & Tag Parsing 🔲
+
+##### 2.1 Redesign `IChatService` interface
+
+- [ ] Open `src/LLMAgentTUI./Services/IChatService.cs`
+- [ ] Add `using System.Collections.Generic;` and `using System.Threading;` (if not already present via implicit usings)
+- [ ] Replace: `Task<string> SendMessageAsync(string message);`
+- [ ] With: `IAsyncEnumerable<StreamingChatUpdate> SendMessageStreamingAsync(string message, CancellationToken cancellationToken = default);`
+- [ ] Remove the old method declaration entirely — no overloads
+
+##### 2.2 Implement streaming + tag state machine in `ChatService`
+
+- [ ] Open `src/LLMAgentTUI./Services/ChatService.cs`
+- [ ] Add `using System.Runtime.CompilerServices;` for `[EnumeratorCancellation]`
+- [ ] Remove the existing `SendMessageAsync` method entirely
+- [ ] Add the new method signature: `public async IAsyncEnumerable<StreamingChatUpdate> SendMessageStreamingAsync(string message, [EnumeratorCancellation] CancellationToken cancellationToken = default)`
+- [ ] Inside the method:
+  - [ ] Append `new ChatMessage(ChatRole.User, message)` to `_conversationHistory`
+  - [ ] Declare `bool insideThink = false;`
+  - [ ] Declare `string tagBuffer = string.Empty;` — accumulates characters when a partial `<` tag boundary is being parsed
+  - [ ] Declare `StringBuilder responseBuilder = new();` to accumulate the full response for history
+  - [ ] Declare `StringBuilder thinkingBuilder = new();` to accumulate full thinking content for history
+  - [ ] Call `_chatClient.CompleteStreamingAsync(_conversationHistory, cancellationToken: cancellationToken)`
+  - [ ] `await foreach` over the `IAsyncEnumerable<StreamingChatCompletionUpdate>` result
+  - [ ] For each update, extract the `TextContent` fragment: `update.Text` (the `.Text` property on `StreamingChatCompletionUpdate`)
+  - [ ] For each character in the fragment, implement the state machine:
+    - When `!insideThink` and the accumulated `tagBuffer + char` starts matching `"<think>"`: accumulate in `tagBuffer`
+    - When `tagBuffer` equals `"<think>"`: set `insideThink = true`, clear `tagBuffer`, do not yield
+    - When `insideThink` and `tagBuffer + char` starts matching `"</think>"`: accumulate in `tagBuffer`
+    - When `tagBuffer` equals `"</think>"`: set `insideThink = false`, clear `tagBuffer`, do not yield
+    - When not in a partial tag match: flush `tagBuffer` + `char` as a `StreamingChatUpdate` with `IsThinking = insideThink`; yield each flushed character/chunk; append to appropriate builder
+  - [ ] After the loop: append `new ChatMessage(ChatRole.Assistant, responseBuilder.ToString())` to `_conversationHistory`
+
+> **Implementation note on state machine granularity:** The state machine may yield individual characters or batched fragments — either is correct. Batching (flushing `tagBuffer` only when we confirm it is not part of a tag) produces fewer `StateHasChanged()` calls in the UI. The state machine must never yield a `<think>` or `</think>` tag character as visible content.
+
+##### 2.3 Build and Validate
+
+- [ ] Build `LLMAgentTUI` (dotnet build)
+- [ ] Verify `ChatService` compiles without errors
+- [ ] Verify `IChatService` and `ChatService` are consistent (no missing interface member errors)
+- [ ] Verify no new warnings
+
+---
+
+#### Phase 3: UI Layer — Rendering & Consumption 🔲
+
+##### 3.1 Update `SendMessage()` in `App.razor` to consume the streaming service
+
+- [ ] Open `src/LLMAgentTUI./Components/App.razor`
+- [ ] Add `@using System.Threading` at the top if not present
+- [ ] In `@code`, add `private CancellationTokenSource? _cts;` field
+- [ ] In `SendMessage()`, after appending the user message and calling `StateHasChanged()`:
+  - [ ] Set `_isProcessing = true; StateHasChanged();`
+  - [ ] Create a new `ChatMessage` for the AI response with `Content = string.Empty` and `ThinkingContent = string.Empty`, and add it to `_messages` immediately (this is the message that will be updated incrementally)
+  - [ ] Capture its index: `var botMessageIndex = _messages.Count - 1;`
+  - [ ] Instantiate `_cts = new CancellationTokenSource();`
+  - [ ] In the `try` block, `await foreach` over `ChatService.SendMessageStreamingAsync(userMessage, _cts.Token)`:
+    - [ ] For each `StreamingChatUpdate update`:
+      - [ ] If `update.IsThinking`: append `update.Text` to `_messages[botMessageIndex].ThinkingContent`
+      - [ ] If `!update.IsThinking`: append `update.Text` to `_messages[botMessageIndex].Content`
+      - [ ] Call `StateHasChanged()` after each update to render incrementally
+  - [ ] After the loop: set `_isProcessing = false; StateHasChanged();`
+- [ ] In the `catch` block: set `_messages[botMessageIndex].Content = $"[red]Error: {ex.Message}[/]";`
+- [ ] In the `finally` block: `_isProcessing = false; _cts?.Dispose(); _cts = null; StateHasChanged();`
+
+##### 3.2 Update the rendering loop in `App.razor`
+
+- [ ] Locate the `foreach (var message in _messages)` loop in the template section
+- [ ] For AI messages (`!message.IsUser`), render two sub-blocks in sequence:
+  - [ ] **Thinking block** (rendered only when `!string.IsNullOrEmpty(message.ThinkingContent)`):
+    - `<Markup Content="Thinking" Foreground="@Color.Grey" Decoration="@Decoration.Italic" />`
+    - `<Markup Content="@message.ThinkingContent" Foreground="@Color.Grey" />`
+  - [ ] **Response block**:
+    - `<Markup Content="Bot" Foreground="@Color.Blue" />`
+    - `<Markup Content=" " />`
+    - `<Markdown Content="@message.Content" />`
+- [ ] User messages (`message.IsUser`) remain unchanged — no thinking block
+- [ ] The "Bot" label colour changes from `Color.Blue` (label only) to remain `Color.Blue` — consistent with the existing pattern
+- [ ] The thinking label "Thinking" uses `Color.Grey` and `Decoration.Italic` to visually distinguish from the response
+
+##### 3.3 Build and Validate
+
+- [ ] Build `LLMAgentTUI` (dotnet build)
+- [ ] Verify no compilation errors
+- [ ] Verify no new warnings
+- [ ] Manual smoke test: run the application; send a prompt to `qwen3.5:9b`; confirm:
+  - [ ] Thinking text streams in real time in grey
+  - [ ] Response text streams after thinking, in blue
+  - [ ] Thinking block remains visible after response is complete
+  - [ ] Non-empty `ThinkingContent` renders only when thinking tokens were received
+  - [ ] Spinner disappears after streaming completes
+
+---
+
+### 4.4 — Risk Mitigation
+
+| Risk | Impact | Mitigation |
+|---|---|---|
+| `<think>` / `</think>` tag boundary split across two stream fragments | High — corrupts routing if unhandled | State machine accumulates partial tag characters in `tagBuffer` and only commits when tag is confirmed complete or confirmed not a tag |
+| MEAI `StreamingChatCompletionUpdate.Text` is null for non-text updates (e.g. `UsageContent`) | Medium — null reference in state machine | Guard: `if (string.IsNullOrEmpty(update.Text)) continue;` before processing each update |
+| `StateHasChanged()` called per-character causes excessive re-renders | Medium — UI jitter or performance degradation | Batch updates: flush and call `StateHasChanged()` per MEAI streaming event (per `StreamingChatCompletionUpdate`), not per character |
+| `qwen3.5:9b` stream does not begin with `<think>` (non-thinking prompt) | Low — blank `ThinkingContent` renders empty grey block | Guard on rendering: `@if (!string.IsNullOrEmpty(message.ThinkingContent))` before the thinking block |
+| RazorConsole re-render model differs from Blazor — `StateHasChanged()` behaviour under streaming load | Low-Medium | Validate during Phase 3 smoke test; if re-render is too aggressive, introduce a minimum interval between `StateHasChanged()` calls |
+
+---
+
+### 4.5 — Deviations Protocol
+
+> Any deviation from this Implementation Plan during Phase 05 must be:
+> 1. Stopped immediately
+> 2. Documented in the ANALYSIS document under a new `## Deviations` section
+> 3. Reviewed by the Architect before implementation continues
 
 ---
 
