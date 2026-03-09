@@ -11,9 +11,9 @@
 | Field | Value |
 |---|---|
 | Current Phase | COMPLIANCE & REVIEW PHASE |
-| Phase Status | IN PROGRESS |
+| Phase Status | AWAITING ARCHITECT REVIEW |
 | Last Updated | 2026-03-09 |
-| Pending Architect Action | none |
+| Pending Architect Action | 5 placeholder ADRs require Architect decisions before advancing to Phase 04 |
 
 ---
 
@@ -387,7 +387,94 @@ The copyright header `// Copyright (c) RazorConsole. All rights reserved.` appea
 ---
 
 ## Architecture Decision Records
-*(populated by Architect — never by AI)*
+
+> **ADR 2026-03-09:**
+> Visual treatment of the thinking output — Should the thinking text be visually distinguished from the final response (e.g. a different colour, a collapsible block, a label such as "Thinking…", a dimmed/italic style)? Or is plain streaming text acceptable?
+>
+> **Status:** PENDING ARCHITECT INPUT
+>
+> **Context:**
+> The UI currently renders all AI output as standard `<Markdown>` content. To distinguish thinking text from the final response, the UI component must apply a different visual style to the thinking block. Without a decision here, the implementation plan cannot specify the rendering approach for `App.razor`.
+>
+> **Decision:**
+> TBD based on Architect input.
+>
+> **Consequences:**
+> - DO: Apply the chosen visual treatment to the thinking block in `App.razor`
+> - NOT: Intermix thinking and response text without visual differentiation
+
+---
+
+> **ADR 2026-03-09:**
+> Thinking output persistence — Once the final response has been rendered, should the thinking text remain fully visible, be collapsed/hidden, or be dismissed entirely?
+>
+> **Status:** PENDING ARCHITECT INPUT
+>
+> **Context:**
+> The thinking stream may be lengthy. After the final response is rendered, retaining the full thinking block may crowd the chat history. The `_messages` list in `App.razor` and the `ChatMessage` model both need to know whether to retain a separate thinking block or discard it post-render. This decision affects the data model and the rendering loop.
+>
+> **Decision:**
+> TBD based on Architect input. Likely options: always visible, collapsed by default, or discarded after response is rendered.
+>
+> **Consequences:**
+> - DO: Store thinking content in a dedicated field on the chat message model if it is to be retained
+> - NOT: Store thinking content in the same `Content` field as the final response
+
+---
+
+> **ADR 2026-03-09:**
+> Model detection — Is thinking-capability determined statically (by model name/configuration at startup in `Program.cs`) or dynamically (by detecting the presence of thinking tokens in the streaming response at runtime)?
+>
+> **Status:** PENDING ARCHITECT INPUT
+>
+> **Context:**
+> The current model is hardcoded as `qwen3.5:9b` in `Program.cs`. Static detection would gate thinking-stream rendering based on the configured model name. Dynamic detection would activate thinking-stream rendering only when the stream actually contains thinking tokens — regardless of which model is configured. Dynamic detection is more robust and does not require maintaining a list of known thinking models.
+>
+> **Decision:**
+> TBD based on Architect input.
+>
+> **Consequences:**
+> - DO: If dynamic — detect thinking tokens in the stream and activate thinking UI accordingly
+> - DO: If static — maintain a known-thinking-model list and check at render time
+> - NOT: Mix approaches without a clear decision
+
+---
+
+> **ADR 2026-03-09:**
+> MEAI thinking token surface — Does the `Microsoft.Extensions.AI` Ollama provider (`OllamaChatClient`, v9.1.0-preview.1.25064.3) surface thinking tokens as distinct `StreamingChatCompletionUpdate` events when calling `CompleteStreamingAsync()`? If so, what is the event type, property name, or flag that identifies a thinking token vs. a response token?
+>
+> **Status:** PENDING ARCHITECT INPUT
+>
+> **Context:**
+> This is the most critical open question. Phase 02 analysis identified artefacts in `src/.claude/settings.local.json` (NuGet package decompilation via `ilspycmd`) indicating the Architect was actively investigating this question. Without knowing how — or whether — MEAI surfaces Ollama thinking tokens distinctly, the implementation plan for `ChatService` cannot be written. If MEAI does not surface thinking tokens distinctly (i.e., they arrive merged into the standard text stream), an alternative extraction strategy (e.g. parsing `<think>` tags from the raw stream) must be planned instead.
+>
+> **Decision:**
+> TBD based on Architect's decompilation findings or Ollama API documentation.
+>
+> **Consequences:**
+> - DO: If MEAI surfaces thinking tokens as distinct events — use the MEAI streaming API directly
+> - DO: If MEAI merges thinking into the text stream — implement tag-based extraction from the raw content (e.g. strip `<think>…</think>` blocks)
+> - NOT: Assume the MEAI abstraction surfaces thinking tokens without verification
+
+---
+
+> **ADR 2026-03-09:**
+> Concurrent thinking + response streaming — Can thinking tokens and final response tokens arrive concurrently in the stream, or is the thinking phase always fully complete before final response tokens begin?
+>
+> **Status:** PENDING ARCHITECT INPUT
+>
+> **Context:**
+> The streaming architecture in `ChatService` and the rendering logic in `App.razor` must handle the sequencing of thinking vs. response tokens. If thinking is always complete before the response begins, the implementation can use a simple two-phase streaming loop (drain thinking stream, then drain response stream). If they can overlap, the implementation requires concurrent stream handling or interleaved token routing — significantly more complex.
+>
+> **Decision:**
+> TBD based on Architect input or Ollama API documentation. For Ollama's implementation of extended reasoning models, thinking is typically completed before the response begins.
+>
+> **Consequences:**
+> - DO: If sequential — implement a two-phase loop: accumulate/render thinking tokens until thinking ends, then accumulate/render response tokens
+> - DO: If concurrent — implement concurrent token routing with separate buffers
+> - NOT: Design for sequential and discover concurrent at runtime
+
+---
 
 ---
 
