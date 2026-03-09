@@ -13,7 +13,7 @@
 | Current Phase | COMPLIANCE & REVIEW PHASE |
 | Phase Status | AWAITING ARCHITECT REVIEW |
 | Last Updated | 2026-03-09 |
-| Pending Architect Action | 5 placeholder ADRs require Architect decisions before advancing to Phase 04 |
+| Pending Architect Action | Review compliance updates. Add further ADR annotations if needed, or signal readiness for Implementation Planning Phase. |
 
 ---
 
@@ -234,8 +234,19 @@ public class ChatMessage
 - `_conversationHistory`: mirrors _messages at service level, grows unbounded
 - Typical session: 2–20 message pairs
 
-**Key type gap — no thinking model:**
-There is no data structure representing a thinking/reasoning block. The `ChatMessage` (UI model) has a single `Content` field, which merges all text into one string. There is no `ThinkingContent` or `IsThinking` property.
+**Key type gap — resolved by ADR-1, ADR-2, ADR-4:**
+The current `ChatMessage` UI model has a single `Content` field. Per ADR-2, this must be extended with a `string? ThinkingContent` property. Per ADR-4, the thinking content arrives as tagged text in the stream and must be extracted by the service layer before populating this field. The updated model is:
+
+```csharp
+public class ChatMessage
+{
+    public required string Content { get; set; }      // final response (blue)
+    public string? ThinkingContent { get; set; }      // thinking output (grey); null for non-thinking messages
+    public bool IsUser { get; set; }
+}
+```
+
+Per ADR-1, `ThinkingContent` renders in `Color.Grey` and `Content` renders in `Color.Blue` in the `App.razor` rendering loop.
 
 ---
 
@@ -323,8 +334,8 @@ No `TODO`, `FIXME`, `HACK`, or `NOTE` comments exist anywhere in the source code
 
 The copyright header `// Copyright (c) RazorConsole. All rights reserved.` appears on `Program.cs`, `IChatService.cs`, and `ChatService.cs` — this appears to be copied from the RazorConsole sample template and may not reflect actual ownership.
 
-**Critical implementation gap identified through analysis (not a code comment):**
-`IChatService` returns `Task<string>` — a single string. This interface contract prevents streaming or structured thinking output from reaching the UI layer without an interface change. The return type is the primary constraint on the feature.
+**Critical implementation gap — updated per ADR-4 compliance:**
+`IChatService` returns `Task<string>` — a single string. This interface contract must change. Per ADR-4 findings, the `ChatService` must stream from `CompleteStreamingAsync()`, parse `<think>…</think>` tags, and surface two separate content streams to `App.razor`. The new interface must expose a streaming or callback-based contract that delivers thinking fragments and response fragments separately, in real time, to enable incremental rendering in the UI.
 
 ---
 
@@ -403,6 +414,8 @@ Visual treatment of the thinking output — Should the thinking text be visually
 - DO: Apply the chosen visual treatment to the thinking block in `App.razor`
 - NOT: Intermix thinking and response text without visual differentiation
 
+> **Compliance 2026-03-09:** Analysis updated. The rendering loop in `App.razor` must render two distinct visual blocks per AI message: (1) the thinking block using `Color.Grey` (rendered with a `Markup` or `Markdown` component in grey), and (2) the final response block using `Color.Blue`. The existing `Foreground="@Color.Blue"` used for "Bot" label is the established pattern to follow. The thinking block will render its text content directly — no additional Markdown rendering required for thinking text. The data model requires a separate `ThinkingContent` field on `ChatMessage` (see ADR-2 compliance). See §3.2 and §3.3 updates below.
+
 ---
 
 **ADR 2026-03-09:**
@@ -419,6 +432,8 @@ The thnking stream should always be visible.
 **Consequences:**
 - DO: Store thinking content in a dedicated field on the chat message model if it is to be retained
 - NOT: Store thinking content in the same `Content` field as the final response
+
+> **Compliance 2026-03-09:** Analysis updated. The `ChatMessage` UI model in `App.razor` requires a new `string? ThinkingContent` property (nullable — non-thinking messages will have `null`). Both fields are stored permanently in `_messages` and both are always rendered. The rendering loop checks `!string.IsNullOrEmpty(message.ThinkingContent)` before rendering the thinking block — this ensures non-thinking messages are unaffected. See §3.3 data model update.
 
 ---
 
@@ -438,6 +453,8 @@ Lets keep it hardcoded for now.
 - DO: If static — maintain a known-thinking-model list and check at render time
 - NOT: Mix approaches without a clear decision
 
+> **Compliance 2026-03-09:** Analysis updated. The model remains hardcoded as `qwen3.5:9b` in `Program.cs` — no changes to model configuration. The `<think>` tag extraction approach (confirmed by ADR-4 ILSpy findings) makes model detection naturally implicit: if no `<think>` tags appear in the stream (i.e. for a non-thinking model), `ThinkingContent` remains `null` and the thinking block is not rendered. No model name list or detection flag is needed. The hardcoded model decision and the tag-based detection approach are fully compatible.
+
 ---
 
 **ADR 2026-03-09:**
@@ -455,6 +472,18 @@ IL Spy can be used to inspect the MEAI Ollama package.
 - DO: If MEAI surfaces thinking tokens as distinct events — use the MEAI streaming API directly
 - DO: If MEAI merges thinking into the text stream — implement tag-based extraction from the raw content (e.g. strip `<think>…</think>` blocks)
 - NOT: Assume the MEAI abstraction surfaces thinking tokens without verification
+
+> **Compliance 2026-03-09:** ILSpy decompilation of `Microsoft.Extensions.AI.Ollama.dll` (net9.0 target) performed. Findings are definitive:
+>
+> **`OllamaChatResponseMessage`** has exactly three properties: `Role` (string), `Content` (string), `ToolCalls` (OllamaToolCall[]). There is no `Thinking`, `Reasoning`, or equivalent field.
+>
+> **`OllamaChatResponse`** has no thinking field at the top level either.
+>
+> **`CompleteStreamingAsync`** yields `StreamingChatCompletionUpdate` events built directly from `OllamaChatResponseMessage.Content`. Each streaming update's `Contents[0]` is a `TextContent` whose `Text` is the raw `message.Content` fragment — which for `qwen3.5:9b` will include `<think>` and `</think>` tags as literal text characters.
+>
+> **Conclusion:** MEAI does NOT surface thinking tokens as distinct streaming events. The thinking content arrives merged into the standard `TextContent` stream, delimited by `<think>` and `</think>` tags. The implementation must implement a streaming state machine in `ChatService` that tracks whether the current position in the token stream is inside a `<think>…</think>` block, routing fragments to a `thinkingBuffer` or `responseBuffer` accordingly.
+>
+> The `IChatService` interface must be redesigned to return structured output (thinking content + response content) rather than a single `string`. See §3.2 update.
 
 ---
 
@@ -474,7 +503,11 @@ Ollama is used, thinking is typically completed before the response begins.
 - DO: If concurrent — implement concurrent token routing with separate buffers
 - NOT: Design for sequential and discover concurrent at runtime
 
----
+> **Compliance 2026-03-09:** Analysis updated. The token stream from Ollama for `qwen3.5:9b` is sequential: `<think>` content always precedes response content. This is confirmed by Ollama's architecture for extended reasoning models. The implementation uses a two-phase state machine:
+> - **Phase A (thinking):** Accumulate `TextContent` fragments into `thinkingBuffer` until the `</think>` closing tag boundary is crossed
+> - **Phase B (response):** Accumulate remaining `TextContent` fragments into `responseBuffer`
+>
+> A streaming state machine must handle the case where a `<think>` or `</think>` tag boundary falls mid-fragment (i.e., split across two consecutive `StreamingChatCompletionUpdate` events). The state machine tracks: `insideThink` (bool), `openTagBuffer` (partial tag accumulation), `thinkingBuilder`, `responseBuilder`.
 
 ---
 
@@ -497,5 +530,6 @@ Ollama is used, thinking is typically completed before the response begins.
 | 3 | 2026-03-09 | DEEP FEATURE ANALYSIS PHASE | Show AI model thinking,  /Users/peter/Projects/cucurb-it/analysis-gated-workflow-demo/assets/0001-show-ai-model-thinking |
 | 4 | 2026-03-09 | DEEP FEATURE ANALYSIS PHASE | proceed to the deep code analysis phase |
 | 5 | 2026-03-09 | DEEP CODE ANALYSIS PHASE | proceed to Compliance & Review Phase |
+| 6 | 2026-03-09 | COMPLIANCE & REVIEW PHASE | proceed to Compliance & Review Phase |
 
 ---
