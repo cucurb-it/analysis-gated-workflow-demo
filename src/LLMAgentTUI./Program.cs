@@ -21,7 +21,7 @@ hostBuilder.ConfigureServices(services =>
     {
         // Use Ollama with local model
         services.AddChatClient(client =>
-            new OllamaChatClient(new Uri("http://localhost:11434"), "llama3.2"));
+            new OllamaChatClient(new Uri("http://localhost:11434"), "qwen3.5:9b"));
     }
     else
     {
