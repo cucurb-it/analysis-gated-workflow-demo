@@ -11,7 +11,7 @@
 | Field | Value |
 |---|---|
 | Current Phase | DOCUMENTATION & CLEANUP PHASE |
-| Phase Status | IN PROGRESS |
+| Phase Status | COMPLETE |
 | Last Updated | 2026-03-10 |
 | Pending Architect Action | none |
 
@@ -663,12 +663,12 @@ The primary design decision is the `IChatService` contract shape for surfacing b
 - [x] Build `LLMAgentTUI` (dotnet build)
 - [x] Verify no compilation errors
 - [x] Verify no new warnings
-- [ ] Manual smoke test: run the application; send a prompt to `qwen3.5:9b`; confirm:
-  - [ ] Thinking text streams in real time in grey
-  - [ ] Response text streams after thinking, in blue
-  - [ ] Thinking block remains visible after response is complete
-  - [ ] Non-empty `ThinkingContent` renders only when thinking tokens were received
-  - [ ] Spinner disappears after streaming completes
+- [x] Manual smoke test: run the application; send a prompt to `qwen3.5:9b`; confirm:
+  - [x] Thinking text streams in real time in grey
+  - [x] Response text streams after thinking, in light blue
+  - [x] Thinking block remains visible after response is complete
+  - [x] Non-empty `ThinkingContent` renders only when thinking tokens were received
+  - [x] Spinner disappears after streaming completes
 
 ---
 
@@ -723,7 +723,62 @@ The primary design decision is the `IChatService` contract shape for surfacing b
 ---
 
 ## Implementation Summary
-*(populated in Phase 06)*
+
+### Files Created
+
+| File | Description |
+|---|---|
+| `src/LLMAgentTUI./Services/StreamingChatUpdate.cs` | Discriminated record type `StreamingChatUpdate(string Text, bool IsThinking)` used to route streaming token fragments to either the thinking buffer or response buffer in the UI. |
+
+### Files Modified
+
+| File | Changes |
+|---|---|
+| `src/LLMAgentTUI./Services/IChatService.cs` | Replaced `Task<string> SendMessageAsync` with `IAsyncEnumerable<StreamingChatUpdate> SendMessageStreamingAsync(string message, CancellationToken cancellationToken = default)`. |
+| `src/LLMAgentTUI./Services/ChatService.cs` | Replaced blocking `CompleteAsync` with `GetStreamingResponseAsync` (MEAI 10.x API); replaced `<think>` tag state machine with `TextReasoningContent` / `TextContent` detection in `update.Contents`; replaced `OllamaChatClient` usage with `OllamaApiClient` (OllamaSharp). Conversation history recording preserved. |
+| `src/LLMAgentTUI./Components/App.razor` | Added `string? ThinkingContent` to the `ChatMessage` inner class; replaced single-pass blocking `SendMessageAsync` call with `await foreach` streaming loop accumulating `_streamingThinking` and `_streamingResponse` component fields; updated rendering loop to emit a conditional grey thinking block and a light-blue response block per AI message; added live streaming blocks for thinking and response during in-progress state. |
+| `src/LLMAgentTUI./LLMAgentTUI.csproj` | Removed `Microsoft.Extensions.AI.Ollama` (deprecated / removed from NuGet); added `OllamaSharp` v5.4.23; upgraded `Microsoft.Extensions.AI` and `Microsoft.Extensions.AI.OpenAI` from 9.1.0-preview to 10.3.0. |
+| `src/LLMAgentTUI./Program.cs` | Replaced `OllamaChatClient` (MEAI.Ollama, deprecated) with `OllamaApiClient` (OllamaSharp); updated OpenAI extension from `AsChatClient()` to `AsIChatClient()`. |
+
+### Files Deleted
+
+None.
+
+### Deviations from Plan
+
+**Deviation 1 — RazorConsole `<Padder>` child count constraint**
+Conditional `@if` blocks inside `<Padder>` caused no children to render. Fixed by moving all conditional content to the `<Rows>` level with one `<Padder>` per conditional block. Approved by Architect.
+
+**Deviation 2 — RazorConsole append-only re-render model**
+Mutating a pre-added `_messages[botMessageIndex]` item during streaming did not trigger re-renders. Fixed by accumulating streaming content in component-level fields (`_streamingThinking`, `_streamingResponse`) and only appending the final `ChatMessage` to `_messages` after streaming completes. Approved by Architect.
+
+**Deviation 3 — `Microsoft.Extensions.AI.Ollama` package deprecated; MEAI 10.x API rename; OllamaSharp migration**
+`Microsoft.Extensions.AI.Ollama` removed from NuGet entirely. Newer Ollama surfaces thinking via a dedicated `thinking` API field (not `<think>` tags), which the v9.x package silently discarded. MEAI 10.x renamed `CompleteStreamingAsync` → `GetStreamingResponseAsync`. Migrated to OllamaSharp v5.4.23 + MEAI 10.3.0; thinking now surfaces as `TextReasoningContent` in `update.Contents` — no tag parsing needed. Approved by Architect.
+
+**Deviation 4 — Response color applied via `<Markup>` not `<Markdown>`**
+The Implementation Plan specified `<Markdown>` for bot response rendering. The Architect opted to apply `Color.LightSkyBlue1` via `<Markup foreground="@Color.LightSkyBlue1">` directly, which does not render Markdown formatting but correctly colours the response text. The `<Markdown>` approach (wrapping content in Spectre markup tags) was commented out by the Architect in favour of this simpler approach.
+
+### Learnings
+
+1. **RazorConsole `<Padder>` requires a fixed child count.** Do not place `@if` blocks or `foreach` loops directly inside `<Padder>`. All conditional or dynamic content must live inside `<Rows>`, with one `<Padder>` per conditional block — each always having the same fixed set of children.
+
+2. **RazorConsole re-renders on list append only, not on list item mutation.** Pre-adding a placeholder item to `_messages` and mutating it during streaming does not trigger re-renders. The append-only pattern (accumulate in component fields, append final item after completion) is the correct model for streaming updates.
+
+3. **`Microsoft.Extensions.AI.Ollama` is deprecated and removed from NuGet.** The current community-standard Ollama integration for MEAI is `OllamaSharp`. Newer Ollama (0.6.5+) surfaces thinking in a dedicated API field; `OllamaSharp` correctly maps this to `TextReasoningContent` in MEAI's `update.Contents`.
+
+4. **MEAI `update.Text` only aggregates `TextContent`, not `TextReasoningContent`.** Checking `update.Text` alone will silently miss all thinking tokens. Always iterate `update.Contents` and pattern-match on `TextReasoningContent` vs `TextContent` explicitly.
+
+5. **`<Markdown>` in RazorConsole has no `Foreground` parameter.** Applying a text colour to Markdown-rendered content requires either Spectre markup wrapping in the `Content` string or switching to `<Markup>` (which loses Markdown formatting). The Architect chose `<Markup>` for simplicity.
+
+### Before / After Comparison
+
+| Capability | Before | After |
+|---|---|---|
+| Thinking stream visible | No — silently discarded | Yes — streamed in real time in grey |
+| Response streaming | No — blocking `CompleteAsync`, full response returned at once | Yes — streamed token-by-token via `GetStreamingResponseAsync` |
+| Response colour | White (default terminal) | Light blue (`Color.LightSkyBlue1`) |
+| Thinking persistence | N/A | Always retained; visible above each bot response |
+| Model integration | MEAI.Ollama v9.x (deprecated) | OllamaSharp v5.4.23 + MEAI 10.3.0 |
 
 ---
 
