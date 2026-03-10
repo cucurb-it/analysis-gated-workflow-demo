@@ -3,6 +3,7 @@
 @using System
 @using System.Collections.Generic
 @using System.Linq
+@using System.Threading
 @using Microsoft.AspNetCore.Components
 @using RazorConsole.Components
 @using Spectre.Console
@@ -22,12 +23,49 @@
 		{
 			foreach (var message in _messages)
 			{
-				<Padder Padding="@(new(0, 1, 0, 0))">
-					<Markup Content="@($"{(message.IsUser ? "You" : "Bot")}")" Foreground="@(message.IsUser? Color.Green: Color.Blue)" />
-					<Markup Content=" " />
-					<Markdown Content="@message.Content" />
-				</Padder>
+				@if (message.IsUser)
+				{
+					<Padder Padding="@(new(0, 1, 0, 0))">
+						<Markup Content="You" Foreground="@Color.Green" />
+						<Markup Content=" " />
+						<Markdown Content="@message.Content" />
+					</Padder>
+				}
+				else
+				{
+					@if (!string.IsNullOrEmpty(message.ThinkingContent))
+					{
+						<Padder Padding="@(new(0, 1, 0, 0))">
+							<Markup Content="Thinking" Foreground="@Color.Grey" Decoration="@Decoration.Italic" />
+							<Markup Content="@message.ThinkingContent" Foreground="@Color.Grey" />
+						</Padder>
+					}
+					<Padder Padding="@(new(0, 1, 0, 0))">
+						<Markup Content="Bot" Foreground="@Color.Blue" />
+						<Markup Content=" " />
+						@* <Markdown Content="@($"[lightSkyBlue1]{message.Content}[/]")" /> *@
+						<Markup Content="@($"{message.Content}")" foreground="@Color.LightSkyBlue1" />
+					</Padder>
+				}
 			}
+		}
+
+		@if (_isProcessing && !string.IsNullOrEmpty(_streamingThinking))
+		{
+			<Padder Padding="@(new(0, 1, 0, 0))">
+				<Markup Content="Thinking" Foreground="@Color.Grey" Decoration="@Decoration.Italic" />
+				<Markup Content="@_streamingThinking" Foreground="@Color.Grey" />
+			</Padder>
+		}
+
+		@if (_isProcessing && !string.IsNullOrEmpty(_streamingResponse))
+		{
+			<Padder Padding="@(new(0, 1, 0, 0))">
+				<Markup Content="Bot" Foreground="@Color.Blue" />
+				<Markup Content=" " />
+				@* <Markdown Content="@($"[lightSkyBlue1]{_streamingResponse}[/]")" /> *@
+				<Markup Content="@($"{_streamingResponse}")" foreground="@Color.LightSkyBlue1" />
+			</Padder>
 		}
 
 		@if (_isProcessing)
@@ -52,6 +90,9 @@
 	private List<ChatMessage> _messages = new();
 	private string _currentInput = string.Empty;
 	private bool _isProcessing = false;
+	private CancellationTokenSource? _cts;
+	private string _streamingThinking = string.Empty;
+	private string _streamingResponse = string.Empty;
 
 	private async Task SendMessage()
 	{
@@ -72,29 +113,41 @@
 		StateHasChanged();
 
 		_isProcessing = true;
+		_streamingThinking = string.Empty;
+		_streamingResponse = string.Empty;
 		StateHasChanged();
+
+		_cts = new CancellationTokenSource();
 
 		try
 		{
-			var response = await ChatService.SendMessageAsync(userMessage);
-
-			_messages.Add(new ChatMessage
+			await foreach (var update in ChatService.SendMessageStreamingAsync(userMessage, _cts.Token))
 			{
-				Content = response,
-				IsUser = false
-			});
+				if (update.IsThinking)
+					_streamingThinking += update.Text;
+				else
+					_streamingResponse += update.Text;
+
+				StateHasChanged();
+			}
 		}
 		catch (Exception ex)
 		{
-			_messages.Add(new ChatMessage
-			{
-				Content = $"[red]Error: {ex.Message}[/]",
-				IsUser = false
-			});
+			_streamingResponse = $"Error: {ex.Message}";
 		}
 		finally
 		{
+			_messages.Add(new ChatMessage
+			{
+				Content = _streamingResponse,
+				ThinkingContent = string.IsNullOrEmpty(_streamingThinking) ? null : _streamingThinking,
+				IsUser = false
+			});
 			_isProcessing = false;
+			_cts?.Dispose();
+			_cts = null;
+			_streamingThinking = string.Empty;
+			_streamingResponse = string.Empty;
 			StateHasChanged();
 		}
 	}
@@ -102,6 +155,7 @@
 	public class ChatMessage
 	{
 		public required string Content { get; set; }
+		public string? ThinkingContent { get; set; }
 		public bool IsUser { get; set; }
 	}
 }

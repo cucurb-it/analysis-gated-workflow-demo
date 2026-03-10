@@ -5,6 +5,7 @@ using LLMAgentTUI.Services;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using OllamaSharp;
 using OpenAI;
 using RazorConsole.Core;
 
@@ -20,15 +21,13 @@ hostBuilder.ConfigureServices(services =>
     if (useOllama)
     {
         // Use Ollama with local model
-        services.AddChatClient(client =>
-            new OllamaChatClient(new Uri("http://localhost:11434"), "qwen3.5:9b"));
+        services.AddChatClient(new OllamaApiClient(new Uri("http://localhost:11434"), "qwen3.5:9b"));
     }
     else
     {
         // Use OpenAI
         var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY")!;
-        services.AddChatClient(client =>
-            new OpenAIClient(apiKey).AsChatClient("gpt-4o-mini"));
+        services.AddChatClient(new OpenAIClient(apiKey).GetChatClient("gpt-4o-mini").AsIChatClient());
     }
 
     services.AddSingleton<IChatService, ChatService>();

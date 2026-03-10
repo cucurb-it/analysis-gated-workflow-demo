@@ -4,5 +4,5 @@ namespace LLMAgentTUI.Services;
 
 public interface IChatService
 {
-    Task<string> SendMessageAsync(string message);
+    IAsyncEnumerable<StreamingChatUpdate> SendMessageStreamingAsync(string message, CancellationToken cancellationToken = default);
 }
