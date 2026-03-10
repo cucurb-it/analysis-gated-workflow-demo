@@ -9,6 +9,7 @@ EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "0001-show-ai-model-thinking", "0001-show-ai-model-thinking", "{0DF79718-BAC9-4E17-A64F-96E2EDB64F1F}"
 	ProjectSection(SolutionItems) = preProject
 		..\assets\0001-show-ai-model-thinking\SHOW_AI_MODEL_THINKING_ANALYSIS.md = ..\assets\0001-show-ai-model-thinking\SHOW_AI_MODEL_THINKING_ANALYSIS.md
+		..\assets\0001-show-ai-model-thinking\SHOW_AI_MODEL_THINKING_REVIEW_20260310_114547.md = ..\assets\0001-show-ai-model-thinking\SHOW_AI_MODEL_THINKING_REVIEW_20260310_114547.md
 	EndProjectSection
 EndProject
 Global
