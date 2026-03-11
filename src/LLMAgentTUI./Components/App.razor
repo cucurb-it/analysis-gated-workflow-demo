@@ -36,8 +36,7 @@
 					@if (!string.IsNullOrEmpty(message.ThinkingContent))
 					{
 						<Padder Padding="@(new(0, 1, 0, 0))">
-							<Markup Content="Thinking" Foreground="@Color.Grey" Decoration="@Decoration.Italic" />
-							<Markup Content="@message.ThinkingContent" Foreground="@Color.Grey" />
+							<Markup Content="@message.ThinkingContent" Foreground="@Color.Grey" Decoration="@Decoration.Italic" />
 						</Padder>
 					}
 					<Padder Padding="@(new(0, 1, 0, 0))">
@@ -53,8 +52,7 @@
 		@if (_isProcessing && !string.IsNullOrEmpty(_streamingThinking))
 		{
 			<Padder Padding="@(new(0, 1, 0, 0))">
-				<Markup Content="Thinking" Foreground="@Color.Grey" Decoration="@Decoration.Italic" />
-				<Markup Content="@_streamingThinking" Foreground="@Color.Grey" />
+				<Markup Content="@_streamingThinking" Foreground="@Color.Grey" Decoration="@Decoration.Italic" />
 			</Padder>
 		}
 
@@ -64,13 +62,13 @@
 				<Markup Content="Bot" Foreground="@Color.Blue" />
 				<Markup Content=" " />
 				@* <Markdown Content="@($"[lightSkyBlue1]{_streamingResponse}[/]")" /> *@
-				<Markup Content="@($"{_streamingResponse}")" foreground="@Color.LightSkyBlue1" />
+				<Markup Content="@($"{_streamingResponse}")" Foreground="@Color.Red" />
 			</Padder>
 		}
 
 		@if (_isProcessing)
 		{
-			<Padder Padding="@(new(0, 0, 0, 1))">
+			<Padder Padding="@(new(0, 1, 0, 1))">
 				<Columns>
 					<RazorConsole.Components.Spinner SpinnerType="@Spectre.Console.Spinner.Known.Dots" />
 					<Markup Content="AI is thinking..." Foreground="@Color.Grey" Decoration="@Decoration.Italic" />
