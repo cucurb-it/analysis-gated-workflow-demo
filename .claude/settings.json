@@ -1,0 +1,7 @@
+{
+  "enabledPlugins": {
+    "implementation-documentation@cucurb-it-ai-tools": true,
+    "analysis-gated-workflow@cucurb-it-analysis-gated-workflow": true,
+    "implementation-review@cucurb-it-ai-tools": true
+  }
+}

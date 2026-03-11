@@ -1,0 +1,161 @@
+@namespace LLMAgentTUI.Components
+
+@using System
+@using System.Collections.Generic
+@using System.Linq
+@using System.Threading
+@using Microsoft.AspNetCore.Components
+@using RazorConsole.Components
+@using Spectre.Console
+@using LLMAgentTUI.Services
+
+@inject IChatService ChatService
+
+<Figlet Content="ChatBot" />
+
+<Padder Padding="@(new(1, 0, 0, 0))">
+	<Rows>
+		@if (_messages.Count == 0)
+		{
+			<Markup Content="No messages yet. Type a message below to start chatting." Foreground="@Color.Grey" />
+		}
+		else
+		{
+			foreach (var message in _messages)
+			{
+				@if (message.IsUser)
+				{
+					<Padder Padding="@(new(0, 1, 0, 0))">
+						<Markup Content="You" Foreground="@Color.Green" />
+						<Markup Content=" " />
+						<Markdown Content="@message.Content" />
+					</Padder>
+				}
+				else
+				{
+					@if (!string.IsNullOrEmpty(message.ThinkingContent))
+					{
+						<Padder Padding="@(new(0, 1, 0, 0))">
+							<Markup Content="Thinking" Foreground="@Color.Grey" Decoration="@Decoration.Italic" />
+							<Markup Content="@message.ThinkingContent" Foreground="@Color.Grey" />
+						</Padder>
+					}
+					<Padder Padding="@(new(0, 1, 0, 0))">
+						<Markup Content="Bot" Foreground="@Color.Blue" />
+						<Markup Content=" " />
+						@* <Markdown Content="@($"[lightSkyBlue1]{message.Content}[/]")" /> *@
+						<Markup Content="@($"{message.Content}")" foreground="@Color.LightSkyBlue1" />
+					</Padder>
+				}
+			}
+		}
+
+		@if (_isProcessing && !string.IsNullOrEmpty(_streamingThinking))
+		{
+			<Padder Padding="@(new(0, 1, 0, 0))">
+				<Markup Content="Thinking" Foreground="@Color.Grey" Decoration="@Decoration.Italic" />
+				<Markup Content="@_streamingThinking" Foreground="@Color.Grey" />
+			</Padder>
+		}
+
+		@if (_isProcessing && !string.IsNullOrEmpty(_streamingResponse))
+		{
+			<Padder Padding="@(new(0, 1, 0, 0))">
+				<Markup Content="Bot" Foreground="@Color.Blue" />
+				<Markup Content=" " />
+				@* <Markdown Content="@($"[lightSkyBlue1]{_streamingResponse}[/]")" /> *@
+				<Markup Content="@($"{_streamingResponse}")" foreground="@Color.LightSkyBlue1" />
+			</Padder>
+		}
+
+		@if (_isProcessing)
+		{
+			<Padder Padding="@(new(0, 0, 0, 1))">
+				<Columns>
+					<RazorConsole.Components.Spinner SpinnerType="@Spectre.Console.Spinner.Known.Dots" />
+					<Markup Content="AI is thinking..." Foreground="@Color.Grey" Decoration="@Decoration.Italic" />
+				</Columns>
+			</Padder>
+		}
+	</Rows>
+</Padder>
+
+<TextInput @bind-Value="_currentInput" Placeholder="Type your message here..." OnSubmit="SendMessage" Expand="true" onclick="SendMessage" />
+
+<Align Horizontal="@HorizontalAlignment.Center">
+	<Markup Content="AI-Powered Console ChatBot • Tab to change focus • Enter to submit • Ctrl+C to exit" Foreground="@Color.Grey58" />
+</Align>
+
+@code {
+	private List<ChatMessage> _messages = new();
+	private string _currentInput = string.Empty;
+	private bool _isProcessing = false;
+	private CancellationTokenSource? _cts;
+	private string _streamingThinking = string.Empty;
+	private string _streamingResponse = string.Empty;
+
+	private async Task SendMessage()
+	{
+		if (string.IsNullOrWhiteSpace(_currentInput))
+		{
+			return;
+		}
+
+		var userMessage = _currentInput.Trim();
+		_currentInput = string.Empty;
+
+		_messages.Add(new ChatMessage
+		{
+			Content = userMessage,
+			IsUser = true
+		});
+
+		StateHasChanged();
+
+		_isProcessing = true;
+		_streamingThinking = string.Empty;
+		_streamingResponse = string.Empty;
+		StateHasChanged();
+
+		_cts = new CancellationTokenSource();
+
+		try
+		{
+			await foreach (var update in ChatService.SendMessageStreamingAsync(userMessage, _cts.Token))
+			{
+				if (update.IsThinking)
+					_streamingThinking += update.Text;
+				else
+					_streamingResponse += update.Text;
+
+				StateHasChanged();
+			}
+		}
+		catch (Exception ex)
+		{
+			_streamingResponse = $"Error: {ex.Message}";
+		}
+		finally
+		{
+			_messages.Add(new ChatMessage
+			{
+				Content = _streamingResponse,
+				ThinkingContent = string.IsNullOrEmpty(_streamingThinking) ? null : _streamingThinking,
+				IsUser = false
+			});
+			_isProcessing = false;
+			_cts?.Dispose();
+			_cts = null;
+			_streamingThinking = string.Empty;
+			_streamingResponse = string.Empty;
+			StateHasChanged();
+		}
+	}
+
+	public class ChatMessage
+	{
+		public required string Content { get; set; }
+		public string? ThinkingContent { get; set; }
+		public bool IsUser { get; set; }
+	}
+}
