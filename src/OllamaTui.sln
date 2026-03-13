@@ -10,7 +10,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "0001-show-ai-model-thinking
 	ProjectSection(SolutionItems) = preProject
 		..\assets\0001-show-ai-model-thinking\SHOW_AI_MODEL_THINKING_ANALYSIS.md = ..\assets\0001-show-ai-model-thinking\SHOW_AI_MODEL_THINKING_ANALYSIS.md
 		..\assets\0001-show-ai-model-thinking\SHOW_AI_MODEL_THINKING_REVIEW_20260310_114547.md = ..\assets\0001-show-ai-model-thinking\SHOW_AI_MODEL_THINKING_REVIEW_20260310_114547.md
-		..\assets\0001-show-ai-model-thinking\SHOW_AI_MODEL_THINKING_DOCUMENTATION.md = ..\assets\0001-show-ai-model-thinking\SHOW_AI_MODEL_THINKING_DOCUMENTATION.md
+		..\assets\0001-show-ai-model-thinking\SHOW_AI_MODEL_THINKING_DOCUMENTATION_FOR_DEVELOPERS.md = ..\assets\0001-show-ai-model-thinking\SHOW_AI_MODEL_THINKING_DOCUMENTATION_FOR_DEVELOPERS.md
+		..\assets\0001-show-ai-model-thinking\SHOW_AI_MODEL_THINKING_DOCUMENTATION_FOR_BUSINESS_STAKEHOLDERS.md = ..\assets\0001-show-ai-model-thinking\SHOW_AI_MODEL_THINKING_DOCUMENTATION_FOR_BUSINESS_STAKEHOLDERS.md
 	EndProjectSection
 EndProject
 Global
